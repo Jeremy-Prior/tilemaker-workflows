@@ -177,6 +177,26 @@ jobs:
           output-format: sarif
           fail-build: false
 
+      - name: Gate on critical CVEs
+        run: |
+          SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
+          CRITICAL_COUNT=$(python3 - "$SCAN_FILE" <<'PYEOF'
+          import json, sys
+          with open(sys.argv[1]) as f:
+              data = json.load(f)
+          critical = [
+              m for m in data.get("matches", [])
+              if m.get("vulnerability", {}).get("severity", "").lower() == "critical"
+          ]
+          print(len(critical))
+          PYEOF
+          )
+          echo "Critical CVEs found: ${CRITICAL_COUNT}"
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "::error::Build blocked: ${CRITICAL_COUNT} critical CVE(s) detected. Fix these before merging or releasing."
+            exit 1
+          fi
+
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -184,6 +204,7 @@ jobs:
           sarif_file: ${{ steps.cve-sarif.outputs.sarif }}
 
       - name: Generate CVE markdown table
+        if: always() && steps.cve-scan.outputs.json
         run: |
           SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
 
@@ -306,6 +327,7 @@ jobs:
           PYEOF
 
       - name: Generate build report
+        if: always()
         id: report
         run: |
           VERSION="${{ steps.version.outputs.tag }}"
@@ -425,7 +447,7 @@ jobs:
 
       # --- PR: upload artifact and post/update comment ---
       - name: Upload artifacts (PR)
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: tilemaker-server-pr-${{ github.event.pull_request.number }}
@@ -437,7 +459,7 @@ jobs:
           overwrite: true
 
       - name: Find existing PR comment
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: peter-evans/find-comment@v3
         id: find-comment
         with:
@@ -446,7 +468,7 @@ jobs:
           body-includes: "## Docker Image Build"
 
       - name: Post or update PR comment
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
