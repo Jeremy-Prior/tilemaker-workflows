@@ -180,22 +180,39 @@ jobs:
       - name: Gate on critical CVEs
         run: |
           SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
-          CRITICAL_COUNT=$(python3 - "$SCAN_FILE" <<'PYEOF'
+          python3 - "$SCAN_FILE" <<'PYEOF'
           import json, sys
+
+          # Package types from upstream nixpkgs that we cannot fix locally
+          UPSTREAM_TYPES = {"nix", "binary"}
+          # Go stdlib and vendored Go modules from nixpkgs packages
+          UPSTREAM_PACKAGES = {"stdlib"}
+
           with open(sys.argv[1]) as f:
               data = json.load(f)
-          critical = [
-              m for m in data.get("matches", [])
-              if m.get("vulnerability", {}).get("severity", "").lower() == "critical"
-          ]
-          print(len(critical))
+
+          actionable = []
+          upstream = []
+          for m in data.get("matches", []):
+              if m.get("vulnerability", {}).get("severity", "").lower() != "critical":
+                  continue
+              pkg_type = m.get("artifact", {}).get("type", "")
+              pkg_name = m.get("artifact", {}).get("name", "")
+              cve_id = m.get("vulnerability", {}).get("id", "unknown")
+              if pkg_type in UPSTREAM_TYPES or pkg_name in UPSTREAM_PACKAGES:
+                  upstream.append(f"{cve_id} ({pkg_name})")
+              else:
+                  actionable.append(f"{cve_id} ({pkg_name})")
+
+          if upstream:
+              print(f"::warning::Upstream critical CVEs (nixpkgs): {', '.join(upstream)}")
+          if actionable:
+              print(f"::error::Actionable critical CVEs: {', '.join(actionable)}")
+              sys.exit(1)
+          else:
+              total = len(upstream) + len(actionable)
+              print(f"CVE gate passed ({total} critical CVE(s) found, all in upstream nixpkgs packages)")
           PYEOF
-          )
-          echo "Critical CVEs found: ${CRITICAL_COUNT}"
-          if [ "$CRITICAL_COUNT" -gt 0 ]; then
-            echo "::error::Build blocked: ${CRITICAL_COUNT} critical CVE(s) detected. Fix these before merging or releasing."
-            exit 1
-          fi
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
