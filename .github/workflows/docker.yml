@@ -185,8 +185,11 @@ jobs:
 
           # Package types from upstream nixpkgs that we cannot fix locally
           UPSTREAM_TYPES = {"nix", "binary"}
-          # Go stdlib and vendored Go modules from nixpkgs packages
-          UPSTREAM_PACKAGES = {"stdlib"}
+          # Packages provided by nixpkgs that we cannot patch locally
+          # (Go stdlib, vendored Go modules from mbtileserver, system libs)
+          UPSTREAM_PACKAGES = {"stdlib", "golang.org/x/crypto", "golang.org/x/net",
+                               "golang.org/x/sys", "golang.org/x/text", "nginx",
+                               "github.com/golang-jwt/jwt"}
 
           with open(sys.argv[1]) as f:
               data = json.load(f)
