@@ -117,7 +117,6 @@
             pkgs.mbtileserver
             pkgs.nginx
             pkgs.bashInteractive
-            pkgs.coreutils
             pkgs.findutils
             nginxConf
             entrypoint

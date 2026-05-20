@@ -177,6 +177,46 @@ jobs:
           output-format: sarif
           fail-build: false
 
+      - name: Gate on critical CVEs
+        run: |
+          SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
+          python3 - "$SCAN_FILE" <<'PYEOF'
+          import json, sys
+
+          # Package types from upstream nixpkgs that we cannot fix locally
+          UPSTREAM_TYPES = {"nix", "binary"}
+          # Packages provided by nixpkgs that we cannot patch locally
+          # (Go stdlib, vendored Go modules from mbtileserver, system libs)
+          UPSTREAM_PACKAGES = {"stdlib", "golang.org/x/crypto", "golang.org/x/net",
+                               "golang.org/x/sys", "golang.org/x/text", "nginx",
+                               "github.com/golang-jwt/jwt"}
+
+          with open(sys.argv[1]) as f:
+              data = json.load(f)
+
+          actionable = []
+          upstream = []
+          for m in data.get("matches", []):
+              if m.get("vulnerability", {}).get("severity", "").lower() != "critical":
+                  continue
+              pkg_type = m.get("artifact", {}).get("type", "")
+              pkg_name = m.get("artifact", {}).get("name", "")
+              cve_id = m.get("vulnerability", {}).get("id", "unknown")
+              if pkg_type in UPSTREAM_TYPES or pkg_name in UPSTREAM_PACKAGES:
+                  upstream.append(f"{cve_id} ({pkg_name})")
+              else:
+                  actionable.append(f"{cve_id} ({pkg_name})")
+
+          if upstream:
+              print(f"::warning::Upstream critical CVEs (nixpkgs): {', '.join(upstream)}")
+          if actionable:
+              print(f"::error::Actionable critical CVEs: {', '.join(actionable)}")
+              sys.exit(1)
+          else:
+              total = len(upstream) + len(actionable)
+              print(f"CVE gate passed ({total} critical CVE(s) found, all in upstream nixpkgs packages)")
+          PYEOF
+
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -184,6 +224,7 @@ jobs:
           sarif_file: ${{ steps.cve-sarif.outputs.sarif }}
 
       - name: Generate CVE markdown table
+        if: always() && steps.cve-scan.outputs.json
         run: |
           SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
 
@@ -306,6 +347,7 @@ jobs:
           PYEOF
 
       - name: Generate build report
+        if: always()
         id: report
         run: |
           VERSION="${{ steps.version.outputs.tag }}"
@@ -425,7 +467,7 @@ jobs:
 
       # --- PR: upload artifact and post/update comment ---
       - name: Upload artifacts (PR)
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: tilemaker-server-pr-${{ github.event.pull_request.number }}
@@ -437,7 +479,7 @@ jobs:
           overwrite: true
 
       - name: Find existing PR comment
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: peter-evans/find-comment@v3
         id: find-comment
         with:
@@ -446,7 +488,7 @@ jobs:
           body-includes: "## Docker Image Build"
 
       - name: Post or update PR comment
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
